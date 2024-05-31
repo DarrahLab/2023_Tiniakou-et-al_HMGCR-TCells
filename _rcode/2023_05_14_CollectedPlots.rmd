@@ -1,0 +1,333 @@
+---
+title: "Expansion-TCR-Clustering"
+output: html_document
+date: "2024-02-02"
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_knit$set(echo = TRUE, 
+                     root.dir = "/media/aag7319/MungoBK/Professional/HMGCR-Tcells" )
+library(stringdist)
+library(clValid)
+library(RColorBrewer)
+library(circlize)
+library(dplyr)
+library(dendextend) #color_branches
+library(ggseqlogo)
+library(msa)
+library(ragg)
+library(ggplot2)
+library(ggprism)
+```
+
+
+# cols_set2 = c("#66C2A5" ,"#8DA0CB" ,"#E78AC3", "#A6D854", "#FC8D62" , "#FFD92F",  "#B3B3B3", "#E5C494") 
+# cols_dark2 = c("#1B9E77" , "#7570B3", "#E7298A", "#66A61E" , "#D95F02", "#E6AB02", "#666666" ,  "#A6761D")
+# cols_mt = c('#FFAC9C' , '#E78AC3', '#A7B1F5', '#66B7E0', '#9CD48C', '#FCC93A', '#D06F5E', '#AE3666', '#46468C')
+# cols_mt2 = c('#1E293F', '#12405A', '#136281', '#49AFB9', '#9DDEE8', '#248C89', '#7ECABD', '#F2DBAE', '#E9AA74', '#E8825D')
+# #cols = cols_mt[c(1:7,9)]
+# cols = cols_mt[2:9]
+
+
+#Spinning Wheel Dendrogram and Cluster Motifs---------
+```{r, Dendrogram}
+ALPHA = 0.05
+d = read.csv('./MotifGroups/2023-11-28_top-giana-clusters-hmgcr-exclusive.csv')
+
+#Analysis of consensus CDR3 motifs
+motifs = d$Consensus[d$padj < ALPHA]
+dists = stringdist::stringdistmatrix(motifs, useNames = 'strings', method = 'lv')
+
+# Make Plot Based on Optimal Cluster Number: 8
+cols = c( '#E78AC3', '#A7B1F5', '#66B7E0', '#9CD48C', '#FCC93A', '#D06F5E', '#AE3666', '#46468C')
+
+names(cols) = c(1:8)
+
+dend <- dists %>%
+  hclust() %>%
+  as.dendrogram() 
+
+clusters_final = cutree(dend, k = 8)
+idx = order.dendrogram(dend)
+dend<- dend %>%
+  color_branches(clusters = clusters_final[idx], col = rev(cols)) 
+
+par(cex=0.3)
+plot =  circlize_dendrogram(dend,
+                            labels_track_height = 0.3, 
+                            dend_track_height = 0.4)
+
+plot
+
+```
+#Generate logo plots for sequences in each heiarchical cluster
+```{r, SeqLogoPlots}
+giana = read.delim('./objects/2023-09-17_GIANA-MyositisInput-HMGCR--RotationEncodingBL62.txt', skip = 2, header = FALSE)
+
+c = cbind( d[d$padj < ALPHA,] , clusters_final)
+c = c[order(c$clusters_final, decreasing = FALSE),]
+write.csv(c, file = paste0('./code-outputs/', Sys.Date(), '_', '_top-giana-clusters-byhclust.csv' ))
+
+spl = split(c, c$clusters_final)
+spl = lapply(spl, FUN = function(x) return(x$cluster)) #GIANA cluster ids for each heiarchical cluster
+
+logos = vector(mode = 'list', length = length(spl))
+
+for(i in 1:length(spl)){
+  seqs = giana$V1[giana$V2 %in% spl[[i]]]
+  
+  x = msa(seqs, method = 'ClustalOmega', type = 'protein')
+  x = as.character(x)
+  gg = ggplot() + geom_logo(x) + theme_logo()
+  logos[[i]] = gg
+  
+  fname = paste0('./code-outputs/','ClusterLogo', i, '.pdf')
+  pdf(file = fname, width = 5, height = 2.5)
+  plot(gg)
+  dev.off()
+  
+  fname = paste0('./code-outputs/','ClusterLogo', i, '.png')
+  agg_png(filename = fname, width = 1000, height = 500, units = 'px', scaling = 2)
+  plot(gg)
+  dev.off()
+  
+  fname = paste0('./code-outputs/','ClusterLogo', i, '.tiff')
+  agg_tiff(filename = fname, width = 1000, height = 500, units = 'px', scaling = 2)
+  plot(gg)
+  dev.off()
+}
+
+```
+
+
+#Projections by hclust------
+
+```{r }
+load('./objects/2023-11-28_ProjectionResults-exclusive.rda')
+library(ggplot2)
+library(RColorBrewer)
+library(ggprism)
+
+p1 = ggplot(results[results$Source == 'Blood', ], aes(x = Subject, y = freq, fill = Group)) + 
+  geom_col(width = 0.75) + 
+  scale_fill_manual(values = cols) + 
+  theme_prism() + 
+  labs(title = 'CD154+ anti-HMGCR TCRs') + 
+  ylab('Projection Score') + 
+  xlab('Subject')
+p2 = ggplot(results[results$Source == 'Biopsy', ], aes(x = Subject, y = freq, fill = Group)) + 
+  geom_col(width = 0.75) + 
+  scale_fill_manual(values = cols) + 
+  theme_prism() + 
+  labs(title = 'Muscle Biopsy') + 
+  ylab('Projection Score') + 
+  xlab('Subject')
+plots_hmgcr = lapply(plots_hmgcr, FUN = function(x){x = x+scale_fill_manual(values = cols)})
+#Projections BoxPlot-------
+#tmp = load('./objects/ET-tcr/2023-11-29_ProjectionResults.rda')
+tmp = load('./objects/2024-05-14_ProjectionResults.rda')
+#tmp = load('./objects/ET-tcr/2023-11-28_ProjectionResults-exclusive.rda')
+output = hmgcr_agg_output
+output$Source = factor(output$Source, levels = c('HC_PBMC', 'Biopsy'))
+output$x = paste0(output$Source, '_', output$Projection)
+cols_mt2 = c('#1E293F', '#12405A', '#136281', '#49AFB9', '#9DDEE8', '#248C89', '#7ECABD', '#F2DBAE', '#E9AA74', '#E8825D')
+hcs = unique(output$Subject[output$Source == 'HC_PBMC'])[-1]
+set.seed(99)
+torm = sample(hcs, length(hcs) - 10)
+output$x = factor(output$x, 
+                  levels = c('HC_PBMC_Scramble', 'HC_PBMC_HMGCR', 
+                             'Biopsy_Scramble', 'Biopsy_HMGCR') )
+hc_trunc = output[-which(output$Subject %in% torm),]
+ggplot(output[output$Source %in% c('Biopsy', 'HC_PBMC') ,], 
+       aes(x = x, y = freq * 100)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_jitter(data = hc_trunc[hc_trunc$Source %in% c('Biopsy', 'HC_PBMC') ,],
+              width = 0.3, aes(color = Source), size = 1) + 
+  scale_color_manual(values = c('#12405A',  '#E8825D'))+
+  ylab('Projection Score') + 
+  theme_prism() + 
+  theme(axis.text.x = element_text(size = 6)) 
+
+
+ggplot(output[output$Source %in% c('Biopsy') ,], 
+       aes(x = x, y = freq * 100)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_jitter(data = hc_trunc[hc_trunc$Source %in% c('Biopsy') ,],
+              width = 0.3, aes(color = Source), size = 1) + 
+  scale_color_manual(values = c('#12405A',  '#E8825D'))+
+  ylab('Projection Score') + 
+  theme_prism() + 
+  theme(axis.text.x = element_text(size = 6)) + 
+  stat_compare_means(method = 't.test')
+
+ggplot(output[output$Source %in% c('HC_PBMC') ,], 
+       aes(x = x, y = freq * 100)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  geom_jitter(data = hc_trunc[hc_trunc$Source %in% c('HC_PBMC') ,],
+              width = 0.3, aes(color = Source), size = 1) + 
+  scale_color_manual(values = c('#12405A',  '#E8825D'))+
+  ylab('Projection Score') + 
+  theme_prism() + 
+  theme(axis.text.x = element_text(size = 6)) + 
+  stat_compare_means(method = 't.test')
+
+ggplot(output[output$x %in% c('Biopsy_HMGCR', 'HC_PBMC_HMGCR'),], 
+       aes(x = x, y = freq * 100)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  scale_color_manual(values = c('#12405A',  '#E8825D'))+
+  ylab('Projection Score') + 
+  theme_prism() + 
+  theme(axis.text.x = element_text(size = 6)) + 
+  stat_compare_means(method = 't.test')
+
+t.test(output$freq[output$x == 'Biopsy_HMGCR'], output$freq[output$x == 'HC_PBMC_HMGCR'])
+t.test(output$freq[output$x == 'HC_PBMC_Scramble'], output$freq[output$x == 'HC_PBMC_HMGCR'])
+
+```
+
+#Overlap Heatmaps------
+
+```{r }
+library(gplots)
+library(viridis)
+
+load('./objects/ET-tcr/2024-05-14_similarity-metrics.rda') 
+#This matrix displays the number of CD154+ anti-HMGCR TCRs (Columns) found in each 
+# of the muscle biopsies (Rows)
+public_count = cseq_matrix[grep('Biopsy', rownames(overlap_coeff)), grep('Blood', colnames(overlap_coeff))]
+orig = public_count
+
+heatmap.2(public_count, 
+          dendrogram = c('none'), 
+          scale = 'none', 
+          col = rev(viridis(50, option = 'mako')[c(10:30, 50)]),  
+          key = FALSE, 
+          trace = 'none', 
+          density.info = 'none', 
+          Rowv = FALSE, 
+          Colv = FALSE, 
+          cellnote = public_count
+)
+
+public_count = cseq_matrix[grep('Periphery', rownames(overlap_coeff)), grep('Blood', colnames(overlap_coeff))]
+heatmap.2(public_count, 
+          dendrogram = c('none'), 
+          scale = 'none', 
+          col = rev(viridis(50, option = 'mako')[c(10:30, 50)]),  
+          key = FALSE, 
+          trace = 'none', 
+          density.info = 'none', 
+          Rowv = FALSE, 
+          Colv = FALSE, 
+          cellnote = public_count
+)
+
+
+overlap_biopsy = overlap_coeff[grep('Biopsy', rownames(overlap_coeff)), grep('Biopsy', colnames(overlap_coeff))]
+diag(overlap_biopsy) = NA
+heatmap.2(overlap_biopsy, 
+          dendrogram = c('none'), 
+          scale = 'none', 
+          col = rev(viridis(50, option = 'mako')[c(10:30, 50)]),  
+          key = FALSE, 
+          trace = 'none', 
+          density.info = 'none', 
+          Rowv = FALSE, 
+          Colv = FALSE, 
+          cellnote = round(overlap_biopsy * 100)
+)
+
+bmat = nseq_matrix[grep('Biopsy', rownames(nseq_matrix)), grep('Biopsy', colnames(nseq_matrix))]
+
+diag(bmat) = NA
+heatmap.2(bmat, 
+          dendrogram = c('none'), 
+          scale = 'none', 
+          col = rev(viridis(50, option = 'mako')[c(10:30, 50)]),  
+          key = FALSE, 
+          trace = 'none', 
+          density.info = 'none', 
+          Rowv = FALSE, 
+          Colv = FALSE, 
+          cellnote = bmat
+)
+
+```
+#Cluster Metric Evaluation-----
+```{r }
+d = read.csv('./data/2023-11-28_cluster-metrics-excluded.csv')
+
+ggplot(d, aes(x = nK, y = APN)) + 
+  geom_line()
+ggplot(d, aes(x = nK, y = AD)) + 
+  geom_line()
+ggplot(d, aes(x = nK, y = ADM)) + 
+  geom_line()
+ggplot(d, aes(x = nK, y = FOM)) + 
+  geom_line()
+```
+
+
+#Morita Overlap--------
+```{r }
+sub = metric[metric$metric == 'Morisita Overlap' & metric$Comparison %in% c('Biopsy_Biopsy', 
+                                                                            'Periphery_Periphery', 'HC_HC'),]
+
+
+sub$Comparison = gsub('_.*', '', sub$Comparison)
+sub$Comparison = factor(sub$Comparison, levels = c('HC', 'Periphery', 'Biopsy' ))
+idx = which(sub$Comparison == 'HC')
+set.seed(99)
+torm = sample(idx, length(idx) - 10)
+hc_trunc = sub[-torm,]
+
+sub_mini = sub[-sample(which(sub$Comparison == 'HC'), 890, replace = FALSE),]
+cols = brewer.pal(3, 'Set2')
+plot1 = ggplot(sub, aes(x = Comparison, y = value)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  labs(title = 'Morisita Overlap') + 
+
+  geom_jitter(data = hc_trunc, aes(color = Comparison), size = 1) + 
+  scale_color_manual(values = c('#12405A', '#E9AA74', '#E8825D'))+ 
+  #scale_color_manual(values = cols) + 
+  theme_prism() + 
+  guides(colour = guide_legend(override.aes = list(size=3)))
+
+pdf(width = 3.5, height = 2.92, file = './morisita-new.pdf')
+plot1
+dev.off()
+#for reference, the p values of above plot. 
+t.test(sub$value[sub$Group1 == 'Biopsy'], sub$value[sub$Group1 == 'Periphery'])
+t.test(sub$value[sub$Group1 == 'HC'], sub$value[sub$Group1 == 'Periphery'])
+t.test(sub$value[sub$Group1 == 'HC'], sub$value[sub$Group1 == 'Biopsy'])
+#RDI Plot------
+#load('./objects/ET-tcr/2023-12-01_rdi.rda')
+#load('./objects/ET-tcr/2024-01-07_rdi.rda') #updated to remove TCRs common to CMV, HMGCR. 
+load('./objects/ET-tcr/2024-05-14_rdi.rda')
+sims = sims[sims$Var1 != 'HB_Biopsy' & sims$Var2 != 'HB_Biopsy',]
+sims$Group = factor(sims$Group, levels = c('HC', 'Periphery', 'Biopsy' ))
+
+idx = which(sims$Group == 'HC')
+set.seed(97)
+torm = sample(idx, length(idx) - 10)
+hc_trunc = sims[-torm,]
+ggplot(sims, aes(x = Group, y = value)) + 
+  geom_boxplot(outlier.shape = NA) + 
+  labs(title = 'Morisita Overlap') + 
+  
+  geom_jitter(data = hc_trunc, aes(color = Group), size = 1) + 
+  scale_color_manual(values = c('#12405A', '#E9AA74', '#E8825D'))+ 
+  #scale_color_manual(values = cols) + 
+  theme_prism() + 
+  guides(colour = guide_legend(override.aes = list(size=3))) 
+
+
+#for reference, the p values of above plot. 
+t.test(sims$value[sims$Group == 'Biopsy'], sims$value[sims$Group == 'Periphery'])
+t.test(sims$value[sims$Group == 'HC'], sims$value[sims$Group == 'Periphery'])
+t.test(sims$value[sims$Group == 'HC'], sims$value[sims$Group == 'Biopsy'])
+```
+
+```{r}
+sessionInfo()
+```
